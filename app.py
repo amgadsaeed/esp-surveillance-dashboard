@@ -57,19 +57,29 @@ def parse_welldata_dat(file_bytes):
 def plot_productionlink_style(df, selected_cols, axis_configs):
     fig = go.Figure()
     
-    # Separate axes based on user configuration
     left_axes = [col for col in selected_cols if axis_configs[col]['side'] == 'Left']
     right_axes = [col for col in selected_cols if axis_configs[col]['side'] == 'Right']
     
-    # Calculate smart domain margins to prevent crowding
-    AXIS_SPACING = 0.055  # Distance between axes
+    AXIS_SPACING = 0.055 
     domain_start = min(0.4, len(left_axes) * AXIS_SPACING) if left_axes else 0.02
     domain_end = max(0.6, 1.0 - (len(right_axes) * AXIS_SPACING)) if right_axes else 0.98
 
-    # Build Traces
+    # Unit mapping for clean tooltips
+    unit_map = {
+        "Temp-Motor": "degF", "DH Sensor Motor Temperature": "degF",
+        "Temp-Pump Intake": "degF", "Vib-Pump X axis": "G", "Vib-Pump Y axis": "G",
+        "Press-Pump Intake (Pi)": "psi", "Press-Pump Discharge": "psi",
+        "Pwr-Motor Amps Ph B": "A", "Converter Phase C Amps": "A", 
+        "Output Current A": "A", "Output Current C": "A",
+        "Output Frequency": "Hz", "Set Frequency": "Hz", "Status-Hz": "Hz",
+        "Output Volts": "V", "Bus Volts": "V", "Present Motor RPM": "RPM"
+    }
+
+    # Build Traces with Clean Hover Templates
     for i, col in enumerate(selected_cols):
         conf = axis_configs[col]
         yaxis_name = "y" if i == 0 else f"y{i+1}"
+        unit = unit_map.get(col, "")
         
         fig.add_trace(go.Scatter(
             x=df['Date/Time'], 
@@ -77,25 +87,25 @@ def plot_productionlink_style(df, selected_cols, axis_configs):
             name=col, 
             line=dict(color=conf['color'], width=1.5, dash=conf['dash']), 
             yaxis=yaxis_name,
-            mode='lines'
+            mode='lines',
+            # <extra></extra> strips the redundant trace name from the right side of the tooltip
+            hovertemplate=f"%{{y:,.1f}} {unit}<extra></extra>"
         ))
     
-    # Build Unified Layout
+    # Build Unified Layout with reduced height
     layout_dict = {
         "xaxis": dict(
             domain=[domain_start, domain_end],
             showgrid=True, gridcolor='#E5E5E5',
-            # Add the Yellow Spikeline from Screenshot 2
             showspikes=True, spikemode="across", spikethickness=1, spikecolor="gold", spikedash="solid"
         ),
         "margin": dict(l=10, r=10, t=40, b=20),
-        # Unified Tooltip Box from Screenshot 2
         "hovermode": "x unified",
         "hoverlabel": dict(bgcolor="white", font_size=12),
         "plot_bgcolor": "white",
         "paper_bgcolor": "white",
-        "height": 750,
-        "showlegend": False # Unified hover handles the legend cleanly
+        "height": 550,  # Reduced from 750 to eliminate vertical scrolling
+        "showlegend": False 
     }
     
     # Position Axes
@@ -113,7 +123,6 @@ def plot_productionlink_style(df, selected_cols, axis_configs):
             side="right" if is_right else "left"
         )
         
-        # Position Logic
         if is_right:
             idx = right_axes.index(col)
             axis_config['position'] = min(1.0, domain_end + (idx * AXIS_SPACING))
@@ -121,7 +130,6 @@ def plot_productionlink_style(df, selected_cols, axis_configs):
             idx = left_axes.index(col)
             axis_config['position'] = max(0.0, domain_start - (idx * AXIS_SPACING))
             
-        # Manual Scale Override
         if not conf['auto']:
             axis_config['range'] = [conf['min'], conf['max']]
             axis_config['autorange'] = False
@@ -235,7 +243,6 @@ if not st.session_state.raw_data.empty:
         )
         
         axis_configs = {}
-        # Colors aligned roughly with standard templates
         default_colors = {"Temp-Motor": "#ff7f0e", "Vib-Pump X axis": "#8c564b", "Press-Pump Intake (Pi)": "#e377c2", 
                           "Press-Pump Discharge": "#d62728", "Temp-Pump Intake": "#17becf", "Pwr-Motor Amps Ph B": "#0000ff", "Status-Hz": "#000000"}
         fallback_colors = ["#2ca02c", "#9467bd", "#bcbd22", "#7f7f7f"]
@@ -245,7 +252,6 @@ if not st.session_state.raw_data.empty:
                 st.markdown("Use this panel to adjust colors, line styles, axis sides, and manual scaling to perfectly match your templates.")
                 
                 for i, metric in enumerate(selected_metrics):
-                    # Smart defaults based on parameter name
                     def_col = default_colors.get(metric, fallback_colors[i % len(fallback_colors)])
                     def_side = "Right" if any(x in metric for x in ["Amps", "Hz", "Frequency", "Volts"]) else "Left"
                     def_dash = "dash" if "Vib" in metric or "Status" in metric else "solid"
@@ -262,7 +268,6 @@ if not st.session_state.raw_data.empty:
                         
                     axis_configs[metric] = {"color": color, "side": side, "dash": dash, "auto": auto_scale, "min": y_min, "max": y_max}
 
-            # Downsample if extremely large to prevent crashing
             max_points = 10000
             if len(df_filtered) > max_points:
                 step = len(df_filtered) // max_points
