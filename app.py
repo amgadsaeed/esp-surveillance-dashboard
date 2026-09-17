@@ -19,31 +19,24 @@ def parse_welldata_dat(file_bytes):
         i = 0
         data_len = len(file_bytes)
 
-        # Loop through the binary stream
         while i >= 0 and i < data_len - 8:
-            # Find the start of the next data block
             i = file_bytes.find(b'\x02\xff', i)
             if i == -1:
                 break
                 
-            # Find block length (number of 16-bit words)
             length = struct.unpack('>H', file_bytes[i+2:i+4])[0]
             block_size = length * 2
             
-            # Guardrail to prevent infinite loops from bad bytes
             if block_size < 8 or i + block_size > data_len or block_size > 2000:
                 i += 1
                 continue
                 
             try:
-                # Extract Unix Timestamp
                 ts_int = struct.unpack('>I', file_bytes[i+4:i+8])[0]
-                # Validate timestamp is reasonable (between year 2000 and 2050)
                 if 946684800 < ts_int < 2524608000:
                     ts = datetime.datetime.fromtimestamp(ts_int)
                     record = {'Date/Time': ts}
                     
-                    # Extract Sensor ID and Value pairs
                     num_pairs = (block_size - 8) // 6
                     for p in range(num_pairs):
                         offset = i + 8 + p * 6
@@ -53,7 +46,6 @@ def parse_welldata_dat(file_bytes):
                         
                     records.append(record)
                 
-                # Safely jump over the parsed block
                 i += block_size
             except Exception:
                 i += 1
@@ -71,11 +63,17 @@ def parse_welldata_dat(file_bytes):
 def plot_productionlink_style(df, selected_cols):
     """Generates the ProductionLink style multi-axis chart."""
     fig = go.Figure()
-    colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4"]
+    colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4", "#2ca02c", "#9467bd", "#e377c2", "#7f7f7f"]
     num_cols = len(selected_cols)
     
-    # Calculate left margin offset
-    left_domain_start = 0.08 * max(0, num_cols - 2) if num_cols > 2 else 0.05
+    # Cap left domain margin at 0.70 to strictly prevent Plotly ValueError (domain > 1.0)
+    max_left_margin = 0.70
+    if num_cols > 2:
+        offset_spacing = min(0.08, max_left_margin / (num_cols - 2))
+        left_domain_start = offset_spacing * (num_cols - 2)
+    else:
+        offset_spacing = 0.08
+        left_domain_start = 0.05
     
     for i, col in enumerate(selected_cols):
         color = colors[i % len(colors)]
@@ -110,8 +108,10 @@ def plot_productionlink_style(df, selected_cols):
             axis_config.update(dict(overlaying="y", side="right"))
             layout_dict[f"yaxis{i+1}"] = axis_config
         else:
-            position = left_domain_start - (0.08 * i)
-            axis_config.update(dict(anchor="free", overlaying="y", side="left", position=max(0, position)))
+            position = left_domain_start - (offset_spacing * i)
+            # Ensure position is strictly bound between 0.0 and 1.0
+            bound_position = max(0.0, min(1.0, position))
+            axis_config.update(dict(anchor="free", overlaying="y", side="left", position=bound_position))
             layout_dict[f"yaxis{i+1}"] = axis_config
             
     fig.update_layout(**layout_dict)
@@ -122,7 +122,6 @@ def plot_productionlink_style(df, selected_cols):
 # --- 3. Main Dashboard ---
 st.title("ESP Surveillance Dashboard")
 
-# State management to prevent reloading on every click
 if 'raw_data' not in st.session_state:
     st.session_state.raw_data = pd.DataFrame()
 if 'sd_data' not in st.session_state:
@@ -163,7 +162,6 @@ with st.sidebar:
                     elif "SD" in f.name or "Hist" in f.name:
                         sd_frames.append(pd.read_csv(f, on_bad_lines='skip'))
 
-        # Combine and store
         if dat_frames:
             df = pd.concat(dat_frames, ignore_index=True)
             st.session_state.raw_data = df.drop_duplicates(subset=["Date/Time"]).sort_values("Date/Time").reset_index(drop=True)
@@ -173,11 +171,9 @@ with st.sidebar:
             st.session_state.ev_data = pd.concat(ev_frames, ignore_index=True)
         st.success("Processing Complete!")
 
-# Only show the dashboard if data has been processed
 if not st.session_state.raw_data.empty:
     df_dat = st.session_state.raw_data
     
-    # Map the internal hex IDs to the readable names from your screenshot
     rename_map = {
         "Param_00d1": "Temp-Motor",
         "Param_04bf": "Vib-Pump X axis",
@@ -188,7 +184,6 @@ if not st.session_state.raw_data.empty:
     }
     df_dat = df_dat.rename(columns=rename_map)
 
-    # Date Filter Configuration
     min_date = df_dat["Date/Time"].min().date()
     max_date = df_dat["Date/Time"].max().date()
     
@@ -196,27 +191,24 @@ if not st.session_state.raw_data.empty:
         st.header("Time Filter")
         date_range = st.date_input("Select Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
     
-    # Apply filter safely
     if isinstance(date_range, tuple) and len(date_range) == 2:
         mask = (df_dat['Date/Time'].dt.date >= date_range[0]) & (df_dat['Date/Time'].dt.date <= date_range[1])
         df_filtered = df_dat.loc[mask]
     else:
         df_filtered = df_dat
 
-    # Tabs
     tab_trends, tab_sd, tab_event = st.tabs(["Trends", "Shutdown History", "Event Log"])
     
     with tab_trends:
-        # Get all numerical columns we can plot
         numeric_cols = df_filtered.select_dtypes(include=["float64", "float32", "int64"]).columns.tolist()
-        
-        # Default to the renamed columns if they exist
         default_selections = [c for c in rename_map.values() if c in numeric_cols]
         
+        # Hard cap the multiselect to a maximum of 10 selections to protect the layout margins
         selected_metrics = st.multiselect(
             "Select Parameters to Plot", 
             options=numeric_cols,
-            default=default_selections if default_selections else numeric_cols[:2]
+            default=default_selections if default_selections else numeric_cols[:2],
+            max_selections=10
         )
         
         if selected_metrics:
