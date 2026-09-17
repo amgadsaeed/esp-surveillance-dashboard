@@ -66,7 +66,7 @@ def plot_productionlink_style(df, selected_cols):
     colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4", "#2ca02c", "#9467bd", "#e377c2", "#7f7f7f"]
     num_cols = len(selected_cols)
     
-    # Cap left domain margin at 0.70 to strictly prevent Plotly ValueError (domain > 1.0)
+    # Cap left domain margin at 0.70 to strictly prevent Plotly ValueError
     max_left_margin = 0.70
     if num_cols > 2:
         offset_spacing = min(0.08, max_left_margin / (num_cols - 2))
@@ -96,8 +96,10 @@ def plot_productionlink_style(df, selected_cols):
     
     for i, col in enumerate(selected_cols):
         color = colors[i % len(colors)]
+        
+        # FIXED: Nested titlefont inside the title dictionary for Plotly compatibility
         axis_config = dict(
-            title=col, titlefont=dict(color=color, size=12), 
+            title=dict(text=col, font=dict(color=color, size=12)), 
             tickfont=dict(color=color, size=11),
             showgrid=(i==0), gridcolor='LightGray'
         )
@@ -109,7 +111,6 @@ def plot_productionlink_style(df, selected_cols):
             layout_dict[f"yaxis{i+1}"] = axis_config
         else:
             position = left_domain_start - (offset_spacing * i)
-            # Ensure position is strictly bound between 0.0 and 1.0
             bound_position = max(0.0, min(1.0, position))
             axis_config.update(dict(anchor="free", overlaying="y", side="left", position=bound_position))
             layout_dict[f"yaxis{i+1}"] = axis_config
@@ -203,7 +204,6 @@ if not st.session_state.raw_data.empty:
         numeric_cols = df_filtered.select_dtypes(include=["float64", "float32", "int64"]).columns.tolist()
         default_selections = [c for c in rename_map.values() if c in numeric_cols]
         
-        # Hard cap the multiselect to a maximum of 10 selections to protect the layout margins
         selected_metrics = st.multiselect(
             "Select Parameters to Plot", 
             options=numeric_cols,
