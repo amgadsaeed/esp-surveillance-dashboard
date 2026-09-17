@@ -66,7 +66,6 @@ def plot_productionlink_style(df, selected_cols):
     colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4", "#2ca02c", "#9467bd", "#e377c2", "#7f7f7f"]
     num_cols = len(selected_cols)
     
-    # Cap left domain margin at 0.70 to strictly prevent Plotly ValueError
     max_left_margin = 0.70
     if num_cols > 2:
         offset_spacing = min(0.08, max_left_margin / (num_cols - 2))
@@ -97,7 +96,6 @@ def plot_productionlink_style(df, selected_cols):
     for i, col in enumerate(selected_cols):
         color = colors[i % len(colors)]
         
-        # FIXED: Nested titlefont inside the title dictionary for Plotly compatibility
         axis_config = dict(
             title=dict(text=col, font=dict(color=color, size=12)), 
             tickfont=dict(color=color, size=11),
@@ -141,7 +139,7 @@ with st.sidebar:
     if st.button("Process Uploaded Files"):
         dat_frames, sd_frames, ev_frames = [], [], []
         
-        with st.spinner("Decoding files..."):
+        with st.spinner("Decoding files... This may take a moment for large datasets."):
             for f in uploaded_files:
                 f.seek(0)
                 if f.name.endswith(".zip"):
@@ -212,7 +210,17 @@ if not st.session_state.raw_data.empty:
         )
         
         if selected_metrics:
-            st.plotly_chart(plot_productionlink_style(df_filtered, selected_metrics), use_container_width=True)
+            # --- DOWNSAMPLING LOGIC ADDED HERE ---
+            # Limit the maximum number of plotted points to 10,000 to prevent browser crashes
+            max_points = 10000
+            if len(df_filtered) > max_points:
+                step = len(df_filtered) // max_points
+                plot_df = df_filtered.iloc[::step]
+                st.caption(f"⚠️ *Displaying {max_points:,} downsampled points out of {len(df_filtered):,} available records for browser performance. Narrow your date range to see higher resolution.*")
+            else:
+                plot_df = df_filtered
+
+            st.plotly_chart(plot_productionlink_style(plot_df, selected_metrics), use_container_width=True)
             
     with tab_sd:
         st.dataframe(st.session_state.sd_data, use_container_width=True)
