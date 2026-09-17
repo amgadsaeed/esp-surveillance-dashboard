@@ -10,10 +10,6 @@ st.set_page_config(page_title="ESP Surveillance Dashboard", layout="wide")
 
 # --- 1. Custom Binary Parser ---
 def parse_welldata_dat(file_bytes):
-    """
-    Safely parses Baker Hughes .dat binary files.
-    Reads length headers and jumps over data to prevent CPU loops.
-    """
     try:
         records = []
         i = 0
@@ -21,8 +17,7 @@ def parse_welldata_dat(file_bytes):
 
         while i >= 0 and i < data_len - 8:
             i = file_bytes.find(b'\x02\xff', i)
-            if i == -1:
-                break
+            if i == -1: break
                 
             length = struct.unpack('>H', file_bytes[i+2:i+4])[0]
             block_size = length * 2
@@ -45,7 +40,6 @@ def parse_welldata_dat(file_bytes):
                         record[f'Param_{param_id:04x}'] = val
                         
                     records.append(record)
-                
                 i += block_size
             except Exception:
                 i += 1
@@ -60,10 +54,8 @@ def parse_welldata_dat(file_bytes):
 
 
 # --- 2. Chart Rendering ---
-def plot_productionlink_style(df, selected_cols):
-    """Generates the ProductionLink style multi-axis chart."""
+def plot_productionlink_style(df, selected_cols, axis_configs):
     fig = go.Figure()
-    colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4", "#2ca02c", "#9467bd", "#e377c2", "#7f7f7f"]
     num_cols = len(selected_cols)
     
     max_left_margin = 0.70
@@ -75,7 +67,7 @@ def plot_productionlink_style(df, selected_cols):
         left_domain_start = 0.05
     
     for i, col in enumerate(selected_cols):
-        color = colors[i % len(colors)]
+        color = axis_configs[col]['color']
         yaxis_name = "y" if i == 0 else f"y{i+1}"
         
         fig.add_trace(go.Scatter(
@@ -88,19 +80,25 @@ def plot_productionlink_style(df, selected_cols):
         "margin": dict(l=20, r=20, t=40, b=20),
         "hovermode": "x unified",
         "plot_bgcolor": "white",
-        "height": 700,
+        "height": 750,
         "showlegend": True,
         "legend": dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     }
     
     for i, col in enumerate(selected_cols):
-        color = colors[i % len(colors)]
+        conf = axis_configs[col]
+        color = conf['color']
         
         axis_config = dict(
             title=dict(text=col, font=dict(color=color, size=12)), 
             tickfont=dict(color=color, size=11),
             showgrid=(i==0), gridcolor='LightGray'
         )
+        
+        # Apply custom scale if Auto-scale is disabled
+        if not conf['auto']:
+            axis_config['range'] = [conf['min'], conf['max']]
+            axis_config['autorange'] = False
         
         if i == 0:
             layout_dict["yaxis"] = axis_config
@@ -138,8 +136,7 @@ with st.sidebar:
     
     if st.button("Process Uploaded Files"):
         dat_frames, sd_frames, ev_frames = [], [], []
-        
-        with st.spinner("Decoding files... This may take a moment for large datasets."):
+        with st.spinner("Decoding files... This may take a moment."):
             for f in uploaded_files:
                 f.seek(0)
                 if f.name.endswith(".zip"):
@@ -173,13 +170,21 @@ with st.sidebar:
 if not st.session_state.raw_data.empty:
     df_dat = st.session_state.raw_data
     
+    # Expanded Dictionary mapping internal hex IDs to readable names
+    # You can add or modify these exact names anytime
     rename_map = {
         "Param_00d1": "Temp-Motor",
         "Param_04bf": "Vib-Pump X axis",
+        "Param_04c0": "Vib-Pump Y axis",
         "Param_3d00": "Press-Pump Intake (Pi)", 
         "Param_1b00": "Press-Pump Discharge",
         "Param_3e00": "Temp-Pump Intake",
-        "Param_04c0": "Pwr-Motor Amps Ph B"
+        "Param_06aa": "Converter Phase B Amps",
+        "Param_06ab": "Converter Phase C Amps",
+        "Param_0701": "Set Frequency",
+        "Param_0005": "Output Frequency",
+        "Param_0009": "Output Volts",
+        "Param_000a": "Bus Volts"
     }
     df_dat = df_dat.rename(columns=rename_map)
 
@@ -205,22 +210,44 @@ if not st.session_state.raw_data.empty:
         selected_metrics = st.multiselect(
             "Select Parameters to Plot", 
             options=numeric_cols,
-            default=default_selections if default_selections else numeric_cols[:2],
+            default=default_selections[:4] if default_selections else numeric_cols[:2],
             max_selections=10
         )
         
+        # --- NEW: Dynamic Color and Scale Configurations ---
+        axis_configs = {}
+        default_colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4", "#2ca02c", "#9467bd"]
+        
         if selected_metrics:
-            # --- DOWNSAMPLING LOGIC ADDED HERE ---
-            # Limit the maximum number of plotted points to 10,000 to prevent browser crashes
+            with st.expander("🎨 Customize Parameter Colors & Scales (Prevent Overlap)", expanded=False):
+                st.markdown("Uncheck 'Auto Scale' to manually set the Min and Max axis bounds. Pushing a trace's Max value much higher than its actual data will move it to the bottom of the chart.")
+                
+                for i, metric in enumerate(selected_metrics):
+                    cols = st.columns([3, 1, 2, 2, 2])
+                    
+                    with cols[0]:
+                        st.markdown(f"**{metric}**")
+                    with cols[1]:
+                        color = st.color_picker(f"Color {i}", value=default_colors[i % len(default_colors)], key=f"color_{metric}", label_visibility="collapsed")
+                    with cols[2]:
+                        auto_scale = st.checkbox("Auto Scale", value=True, key=f"auto_{metric}")
+                    with cols[3]:
+                        y_min = st.number_input("Min Axis Value", value=0.0, key=f"min_{metric}", disabled=auto_scale, label_visibility="collapsed")
+                    with cols[4]:
+                        y_max = st.number_input("Max Axis Value", value=1000.0, key=f"max_{metric}", disabled=auto_scale, label_visibility="collapsed")
+                        
+                    axis_configs[metric] = {"color": color, "auto": auto_scale, "min": y_min, "max": y_max}
+
+            # Downsample if extremely large to prevent crashing
             max_points = 10000
             if len(df_filtered) > max_points:
                 step = len(df_filtered) // max_points
                 plot_df = df_filtered.iloc[::step]
-                st.caption(f"⚠️ *Displaying {max_points:,} downsampled points out of {len(df_filtered):,} available records for browser performance. Narrow your date range to see higher resolution.*")
+                st.caption(f"⚠️ *Displaying {max_points:,} downsampled points out of {len(df_filtered):,} available records for browser performance.*")
             else:
                 plot_df = df_filtered
 
-            st.plotly_chart(plot_productionlink_style(plot_df, selected_metrics), use_container_width=True)
+            st.plotly_chart(plot_productionlink_style(plot_df, selected_metrics, axis_configs), use_container_width=True)
             
     with tab_sd:
         st.dataframe(st.session_state.sd_data, use_container_width=True)
