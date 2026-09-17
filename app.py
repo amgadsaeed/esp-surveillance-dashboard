@@ -53,66 +53,82 @@ def parse_welldata_dat(file_bytes):
         return pd.DataFrame()
 
 
-# --- 2. Chart Rendering ---
+# --- 2. Advanced Chart Rendering ---
 def plot_productionlink_style(df, selected_cols, axis_configs):
     fig = go.Figure()
-    num_cols = len(selected_cols)
     
-    max_left_margin = 0.70
-    if num_cols > 2:
-        offset_spacing = min(0.08, max_left_margin / (num_cols - 2))
-        left_domain_start = offset_spacing * (num_cols - 2)
-    else:
-        offset_spacing = 0.08
-        left_domain_start = 0.05
+    # Separate axes based on user configuration
+    left_axes = [col for col in selected_cols if axis_configs[col]['side'] == 'Left']
+    right_axes = [col for col in selected_cols if axis_configs[col]['side'] == 'Right']
     
+    # Calculate smart domain margins to prevent crowding
+    AXIS_SPACING = 0.055  # Distance between axes
+    domain_start = min(0.4, len(left_axes) * AXIS_SPACING) if left_axes else 0.02
+    domain_end = max(0.6, 1.0 - (len(right_axes) * AXIS_SPACING)) if right_axes else 0.98
+
+    # Build Traces
     for i, col in enumerate(selected_cols):
-        color = axis_configs[col]['color']
+        conf = axis_configs[col]
         yaxis_name = "y" if i == 0 else f"y{i+1}"
         
         fig.add_trace(go.Scatter(
-            x=df['Date/Time'], y=df[col], name=col, 
-            line=dict(color=color, width=1.5), yaxis=yaxis_name
+            x=df['Date/Time'], 
+            y=df[col], 
+            name=col, 
+            line=dict(color=conf['color'], width=1.5, dash=conf['dash']), 
+            yaxis=yaxis_name,
+            mode='lines'
         ))
     
+    # Build Unified Layout
     layout_dict = {
-        "xaxis": dict(domain=[left_domain_start, 0.95]),
-        "margin": dict(l=20, r=20, t=40, b=20),
+        "xaxis": dict(
+            domain=[domain_start, domain_end],
+            showgrid=True, gridcolor='#E5E5E5',
+            # Add the Yellow Spikeline from Screenshot 2
+            showspikes=True, spikemode="across", spikethickness=1, spikecolor="gold", spikedash="solid"
+        ),
+        "margin": dict(l=10, r=10, t=40, b=20),
+        # Unified Tooltip Box from Screenshot 2
         "hovermode": "x unified",
+        "hoverlabel": dict(bgcolor="white", font_size=12),
         "plot_bgcolor": "white",
+        "paper_bgcolor": "white",
         "height": 750,
-        "showlegend": True,
-        "legend": dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        "showlegend": False # Unified hover handles the legend cleanly
     }
     
+    # Position Axes
     for i, col in enumerate(selected_cols):
         conf = axis_configs[col]
-        color = conf['color']
+        is_right = conf['side'] == 'Right'
         
         axis_config = dict(
-            title=dict(text=col, font=dict(color=color, size=12)), 
-            tickfont=dict(color=color, size=11),
-            showgrid=(i==0), gridcolor='LightGray'
+            title=dict(text=col, font=dict(color=conf['color'], size=13)), 
+            tickfont=dict(color=conf['color'], size=12),
+            showgrid=(i==0), gridcolor='#E5E5E5',
+            zeroline=False,
+            anchor="free",
+            overlaying="y" if i > 0 else None,
+            side="right" if is_right else "left"
         )
         
-        # Apply custom scale if Auto-scale is disabled
+        # Position Logic
+        if is_right:
+            idx = right_axes.index(col)
+            axis_config['position'] = min(1.0, domain_end + (idx * AXIS_SPACING))
+        else:
+            idx = left_axes.index(col)
+            axis_config['position'] = max(0.0, domain_start - (idx * AXIS_SPACING))
+            
+        # Manual Scale Override
         if not conf['auto']:
             axis_config['range'] = [conf['min'], conf['max']]
             axis_config['autorange'] = False
-        
-        if i == 0:
-            layout_dict["yaxis"] = axis_config
-        elif i == num_cols - 1 and num_cols > 1:
-            axis_config.update(dict(overlaying="y", side="right"))
-            layout_dict[f"yaxis{i+1}"] = axis_config
-        else:
-            position = left_domain_start - (offset_spacing * i)
-            bound_position = max(0.0, min(1.0, position))
-            axis_config.update(dict(anchor="free", overlaying="y", side="left", position=bound_position))
-            layout_dict[f"yaxis{i+1}"] = axis_config
+            
+        layout_dict["yaxis" if i == 0 else f"yaxis{i+1}"] = axis_config
             
     fig.update_layout(**layout_dict)
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
     return fig
 
 
@@ -136,7 +152,8 @@ with st.sidebar:
     
     if st.button("Process Uploaded Files"):
         dat_frames, sd_frames, ev_frames = [], [], []
-        with st.spinner("Decoding files... This may take a moment."):
+        
+        with st.spinner("Decoding files... This may take a moment for large datasets."):
             for f in uploaded_files:
                 f.seek(0)
                 if f.name.endswith(".zip"):
@@ -170,21 +187,24 @@ with st.sidebar:
 if not st.session_state.raw_data.empty:
     df_dat = st.session_state.raw_data
     
-    # Expanded Dictionary mapping internal hex IDs to readable names
-    # You can add or modify these exact names anytime
     rename_map = {
-        "Param_00d1": "Temp-Motor",
-        "Param_04bf": "Vib-Pump X axis",
-        "Param_04c0": "Vib-Pump Y axis",
-        "Param_3d00": "Press-Pump Intake (Pi)", 
-        "Param_1b00": "Press-Pump Discharge",
-        "Param_3e00": "Temp-Pump Intake",
-        "Param_06aa": "Converter Phase B Amps",
+        "Param_061d": "Temp-Motor",
+        "Param_033f": "DH Sensor Motor Temperature",
+        "Param_061a": "Press-Pump Intake (Pi)", 
+        "Param_061b": "Press-Pump Discharge",
+        "Param_061c": "Temp-Pump Intake",
+        "Param_06aa": "Pwr-Motor Amps Ph B",
         "Param_06ab": "Converter Phase C Amps",
-        "Param_0701": "Set Frequency",
+        "Param_0006": "Output Current A",
+        "Param_0008": "Output Current C",
         "Param_0005": "Output Frequency",
         "Param_0009": "Output Volts",
-        "Param_000a": "Bus Volts"
+        "Param_000a": "Bus Volts",
+        "Param_050c": "Present Motor RPM",
+        "Param_0701": "Status-Hz",
+        "Param_04bf": "Vib-Pump X axis",
+        "Param_04c0": "Vib-Pump Y axis",
+        "Param_00d1": "Power Factor",
     }
     df_dat = df_dat.rename(columns=rename_map)
 
@@ -205,38 +225,42 @@ if not st.session_state.raw_data.empty:
     
     with tab_trends:
         numeric_cols = df_filtered.select_dtypes(include=["float64", "float32", "int64"]).columns.tolist()
-        default_selections = [c for c in rename_map.values() if c in numeric_cols]
+        default_selections = [c for c in rename_map.values() if c in numeric_cols][:6]
         
         selected_metrics = st.multiselect(
             "Select Parameters to Plot", 
             options=numeric_cols,
-            default=default_selections[:4] if default_selections else numeric_cols[:2],
-            max_selections=10
+            default=default_selections if default_selections else numeric_cols[:2],
+            max_selections=12
         )
         
-        # --- NEW: Dynamic Color and Scale Configurations ---
         axis_configs = {}
-        default_colors = ["#ff7f0e", "#8c564b", "#e377c2", "#d62728", "#17becf", "#1f77b4", "#2ca02c", "#9467bd"]
+        # Colors aligned roughly with standard templates
+        default_colors = {"Temp-Motor": "#ff7f0e", "Vib-Pump X axis": "#8c564b", "Press-Pump Intake (Pi)": "#e377c2", 
+                          "Press-Pump Discharge": "#d62728", "Temp-Pump Intake": "#17becf", "Pwr-Motor Amps Ph B": "#0000ff", "Status-Hz": "#000000"}
+        fallback_colors = ["#2ca02c", "#9467bd", "#bcbd22", "#7f7f7f"]
         
         if selected_metrics:
-            with st.expander("🎨 Customize Parameter Colors & Scales (Prevent Overlap)", expanded=False):
-                st.markdown("Uncheck 'Auto Scale' to manually set the Min and Max axis bounds. Pushing a trace's Max value much higher than its actual data will move it to the bottom of the chart.")
+            with st.expander("⚙️ Advanced Axis & Style Configuration", expanded=False):
+                st.markdown("Use this panel to adjust colors, line styles, axis sides, and manual scaling to perfectly match your templates.")
                 
                 for i, metric in enumerate(selected_metrics):
-                    cols = st.columns([3, 1, 2, 2, 2])
+                    # Smart defaults based on parameter name
+                    def_col = default_colors.get(metric, fallback_colors[i % len(fallback_colors)])
+                    def_side = "Right" if any(x in metric for x in ["Amps", "Hz", "Frequency", "Volts"]) else "Left"
+                    def_dash = "dash" if "Vib" in metric or "Status" in metric else "solid"
+
+                    cols = st.columns([2.5, 1, 1, 1.5, 1, 1.5, 1.5])
                     
-                    with cols[0]:
-                        st.markdown(f"**{metric}**")
-                    with cols[1]:
-                        color = st.color_picker(f"Color {i}", value=default_colors[i % len(default_colors)], key=f"color_{metric}", label_visibility="collapsed")
-                    with cols[2]:
-                        auto_scale = st.checkbox("Auto Scale", value=True, key=f"auto_{metric}")
-                    with cols[3]:
-                        y_min = st.number_input("Min Axis Value", value=0.0, key=f"min_{metric}", disabled=auto_scale, label_visibility="collapsed")
-                    with cols[4]:
-                        y_max = st.number_input("Max Axis Value", value=1000.0, key=f"max_{metric}", disabled=auto_scale, label_visibility="collapsed")
+                    with cols[0]: st.markdown(f"**{metric}**")
+                    with cols[1]: color = st.color_picker("Color", value=def_col, key=f"col_{metric}", label_visibility="collapsed")
+                    with cols[2]: side = st.selectbox("Side", ["Left", "Right"], index=0 if def_side=="Left" else 1, key=f"side_{metric}", label_visibility="collapsed")
+                    with cols[3]: dash = st.selectbox("Style", ["solid", "dash", "dot"], index=["solid", "dash", "dot"].index(def_dash), key=f"dash_{metric}", label_visibility="collapsed")
+                    with cols[4]: auto_scale = st.checkbox("Auto", value=True, key=f"auto_{metric}")
+                    with cols[5]: y_min = st.number_input("Min", value=0.0, key=f"min_{metric}", disabled=auto_scale, label_visibility="collapsed")
+                    with cols[6]: y_max = st.number_input("Max", value=5000.0, key=f"max_{metric}", disabled=auto_scale, label_visibility="collapsed")
                         
-                    axis_configs[metric] = {"color": color, "auto": auto_scale, "min": y_min, "max": y_max}
+                    axis_configs[metric] = {"color": color, "side": side, "dash": dash, "auto": auto_scale, "min": y_min, "max": y_max}
 
             # Downsample if extremely large to prevent crashing
             max_points = 10000
